@@ -62,7 +62,13 @@ jobs:
         run: |
           cp ~/.oci/config ./oci_config
           cp ~/.oci/oci_api_key.pem ./oci_api_private_key.pem
-
+      
+          mkdir -p ~/.ssh
+      
+          ssh-keygen -t rsa -b 2048 -f ~/.ssh/id_rsa -N ""
+      
+          cp ~/.ssh/id_rsa.pub ./id_rsa.pub
+      
           cat > oci.env << EOF
           OCI_CONFIG=/home/runner/work/oracle-instance-creator/oracle-instance-creator/oracle-freetier-instance-creation/oci_config
           OCI_COMPARTMENT_OCID=$OCI_TENANCY
@@ -70,6 +76,7 @@ jobs:
           OPERATING_SYSTEM=Canonical Ubuntu
           OS_VERSION=22.04
           DISPLAY_NAME=opencode-server
+          SSH_AUTHORIZED_KEYS_FILE=./id_rsa.pub
           TELEGRAM_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_USER_ID=${{ secrets.TELEGRAM_USER_ID }}
           EOF
