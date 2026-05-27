@@ -1,4 +1,4 @@
-name: Oracle Cloud Instance Creator
+name: Oracle Free Tier Creator
 
 on:
   workflow_dispatch:
@@ -10,82 +10,110 @@ jobs:
   create-instance:
     runs-on: ubuntu-latest
 
-    timeout-minutes: 15
+    timeout-minutes: 5
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
-      - name: Upgrade pip
+      - name: Install OCI SDK
         run: |
-          python -m pip install --upgrade pip
-
-      - name: Install dependencies
-        run: |
-          pip install \
-            oci \
-            cryptography \
-            paramiko \
-            requests \
-            urllib3 \
-            PyYAML \
-            python-dotenv
+          pip install oci
 
       - name: Configure OCI
-        env:
-          OCI_CONFIG: ${{ secrets.OCI_CONFIG }}
-          OCI_KEY: ${{ secrets.OCI_KEY }}
         run: |
           mkdir -p ~/.oci
 
-          echo "$OCI_CONFIG" > ~/.oci/config
-          echo "$OCI_KEY" > ~/.oci/oci_api_key.pem
+          cat > ~/.oci/config <<EOF
+          [DEFAULT]
+          user=${{ secrets.OCI_USER }}
+          fingerprint=${{ secrets.OCI_FINGERPRINT }}
+          tenancy=${{ secrets.OCI_TENANCY }}
+          region=${{ secrets.OCI_REGION }}
+          key_file=/home/runner/.oci/oci_api_key.pem
+          EOF
+
+          echo "${{ secrets.OCI_PRIVATE_KEY }}" > ~/.oci/oci_api_key.pem
 
           chmod 600 ~/.oci/config
           chmod 600 ~/.oci/oci_api_key.pem
 
-      - name: Clone automation repository
+      - name: Generate SSH Key
         run: |
-          git clone https://github.com/mohankumarpaluru/oracle-freetier-instance-creation.git
-
-      - name: Setup SSH key
-        working-directory: oracle-freetier-instance-creation
-        run: |
-          mkdir -p ~/.ssh
-
           ssh-keygen -t rsa -b 2048 -f ~/.ssh/id_rsa -N ""
 
-          cp ~/.ssh/id_rsa.pub ./id_rsa.pub
-
-      - name: Setup OCI environment
-        working-directory: oracle-freetier-instance-creation
-        env:
-          OCI_TENANCY: ${{ secrets.OCI_TENANCY }}
-          OCI_REGION: ${{ secrets.OCI_REGION }}
+      - name: Create Oracle Instance
         run: |
-          cp ~/.oci/config ./oci_config
-          cp ~/.oci/oci_api_key.pem ./oci_api_private_key.pem
+          python3 <<EOF
+          import oci
+          import base64
 
-          cat > oci.env << EOF
-          OCI_CONFIG=/home/runner/work/oracle-instance-creator/oracle-instance-creator/oracle-freetier-instance-creation/oci_config
-          OCI_COMPARTMENT_OCID=$OCI_TENANCY
-          OCI_REGION=$OCI_REGION
-          OPERATING_SYSTEM=Canonical Ubuntu
-          OS_VERSION=22.04
-          DISPLAY_NAME=opencode-server
-          SSH_AUTHORIZED_KEYS_FILE=./id_rsa.pub
-          TELEGRAM_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_USER_ID=${{ secrets.TELEGRAM_USER_ID }}
+          config = oci.config.from_file()
+
+          compute = oci.core.ComputeClient(config)
+          network = oci.core.VirtualNetworkClient(config)
+
+          compartment_id = config["tenancy"]
+
+          print("Searching subnet...")
+
+          subnets = network.list_subnets(
+              compartment_id=compartment_id
+          ).data
+
+          if not subnets:
+              raise Exception("No subnet found")
+
+          subnet_id = subnets[0].id
+
+          print("Using subnet:", subnet_id)
+
+          images = compute.list_images(
+              compartment_id=compartment_id,
+              operating_system="Canonical Ubuntu",
+              operating_system_version="22.04"
+          ).data
+
+          image_id = images[0].id
+
+          print("Using image:", image_id)
+
+          with open("/home/runner/.ssh/id_rsa.pub") as f:
+              ssh_key = f.read()
+
+          details = oci.core.models.LaunchInstanceDetails(
+              compartment_id=compartment_id,
+              availability_domain="Uocm:EU-MADRID-1-AD-1",
+              shape="VM.Standard.A1.Flex",
+              shape_config=oci.core.models.LaunchInstanceShapeConfigDetails(
+                  ocpus=4,
+                  memory_in_gbs=24
+              ),
+              display_name="free-arm-server",
+              create_vnic_details=oci.core.models.CreateVnicDetails(
+                  subnet_id=subnet_id,
+                  assign_public_ip=True
+              ),
+              source_details=oci.core.models.InstanceSourceViaImageDetails(
+                  source_type="image",
+                  image_id=image_id,
+                  boot_volume_size_in_gbs=50
+              ),
+              metadata={
+                  "ssh_authorized_keys": ssh_key
+              }
+          )
+
+          print("Launching instance...")
+
+          response = compute.launch_instance(details)
+
+          print("SUCCESS")
+          print(response.data.id)
+
           EOF
-
-      - name: Run instance creator
-        working-directory: oracle-freetier-instance-creation
-        timeout-minutes: 10
-        run: |
-          python3 -u main.py
-        continue-on-error: true
