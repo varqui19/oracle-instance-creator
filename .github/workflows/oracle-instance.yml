@@ -3,33 +3,54 @@ name: Oracle Cloud Instance Creator
 on:
   workflow_dispatch:
 
+  schedule:
+    - cron: "*/5 * * * *"
+
 jobs:
   create-instance:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      
-      - name: Install OCI SDK
-        run: pip install oci cryptography
-      
+
+      - name: Upgrade pip
+        run: |
+          python -m pip install --upgrade pip
+
+      - name: Install Python dependencies
+        run: |
+          pip install \
+            oci \
+            cryptography \
+            paramiko \
+            requests \
+            urllib3 \
+            PyYAML \
+            python-dotenv
+
       - name: Configure OCI
         env:
           OCI_CONFIG: ${{ secrets.OCI_CONFIG }}
           OCI_KEY: ${{ secrets.OCI_KEY }}
         run: |
           mkdir -p ~/.oci
+
           echo "$OCI_CONFIG" > ~/.oci/config
           echo "$OCI_KEY" > ~/.oci/oci_api_key.pem
+
+          chmod 600 ~/.oci/config
           chmod 600 ~/.oci/oci_api_key.pem
-      
+
       - name: Clone automation repo
-        run: git clone https://github.com/mohankumarpaluru/oracle-freetier-instance-creation.git
-      
+        run: |
+          git clone https://github.com/mohankumarpaluru/oracle-freetier-instance-creation.git
+
       - name: Setup environment
         working-directory: oracle-freetier-instance-creation
         env:
@@ -41,8 +62,9 @@ jobs:
         run: |
           cp ~/.oci/config ./oci_config
           cp ~/.oci/oci_api_key.pem ./oci_api_private_key.pem
+
           cat > oci.env << EOF
-          OCI_CONFIG=/home/runner/work/oracle-setup/oracle-setup/oracle-freetier-instance-creation/oci_config
+          OCI_CONFIG=/home/runner/work/oracle-instance-creator/oracle-instance-creator/oracle-freetier-instance-creation/oci_config
           OCI_COMPARTMENT_OCID=$OCI_TENANCY
           OCI_REGION=$OCI_REGION
           OPERATING_SYSTEM=Canonical Ubuntu
@@ -51,8 +73,9 @@ jobs:
           TELEGRAM_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_USER_ID=${{ secrets.TELEGRAM_USER_ID }}
           EOF
-      
+
       - name: Run instance creator
         working-directory: oracle-freetier-instance-creation
-        run: python3 main.py
+        run: |
+          python3 main.py
         continue-on-error: true
